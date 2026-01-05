@@ -1,0 +1,91 @@
+# version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gdata_tint_app
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - .:/var/www
+      - ./php.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - gdata_tint_net
+    depends_on:
+      - mysql
+    environment:
+      - DB_HOST=mysql
+      - DB_DATABASE=gdata_tint_db
+      - DB_USERNAME=gdata_tint_user
+      - DB_PASSWORD=gdata_tint_pass
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: gdata_tint_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - .:/var/www
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+    networks:
+      - gdata_tint_net
+
+  mysql:
+    image: mysql:8.0
+    platform: linux/amd64
+    container_name: gdata_tint_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pass
+      MYSQL_DATABASE: gdata_tint_db
+      MYSQL_USER: gdata_tint_user
+      MYSQL_PASSWORD: gdata_tint_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql-init.sql:/docker-entrypoint-initdb.d/mysql-init.sql
+    command: --max_allowed_packet=500M
+    networks:
+      - gdata_tint_net
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    platform: linux/amd64
+    container_name: gdata_tint_phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: gdata_tint_user
+      PMA_PASSWORD: gdata_tint_pass
+      UPLOAD_LIMIT: 524288000
+    ports:
+      - "8081:80"
+    volumes:
+      - ./php.ini:/usr/local/etc/php/conf.d/custom.ini
+    depends_on:
+      - mysql
+    networks:
+      - gdata_tint_net
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TOKEN}
+    networks:
+      - gdata_tint_net
+    environment:
+      - CLOUDFLARED_TOKEN=${CLOUDFLARED_TOKEN}
+
+volumes:
+  mysql_data:
+
+networks:
+  gdata_tint_net:
+    driver: bridge
+
