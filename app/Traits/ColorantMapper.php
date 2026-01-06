@@ -8,6 +8,9 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 trait ColorantMapper
 {
+    private ?Spreadsheet $cachedSpreadsheet = null;
+    private const CHUNK_SIZE = 500;
+
     /**
      * Process Excel file and map colorant codes
      *
@@ -21,20 +24,21 @@ trait ColorantMapper
                 throw new \Exception("File not found: {$filePath}");
             }
 
-            $spreadsheet = IOFactory::load($filePath);
+            $this->cachedSpreadsheet = IOFactory::load($filePath);
 
             // Get colorant codes from Colorant sheet
-            $colorantCodes = $this->getColorantCodes($spreadsheet);
+            $colorantCodes = $this->getColorantCodes($this->cachedSpreadsheet);
 
             // Process combined data
-            $processedData = $this->processCombinedData($spreadsheet, $colorantCodes);
+            $processedData = $this->processCombinedData($this->cachedSpreadsheet, $colorantCodes);
 
             return [
                 'headers' => $colorantCodes,
                 'data' => $processedData,
-                'original_headers' => $this->getOriginalHeaders($spreadsheet)
+                'original_headers' => $this->getOriginalHeaders($this->cachedSpreadsheet)
             ];
         } catch (\Exception $e) {
+            $this->clearCache();
             throw new \Exception("Error processing colorant mapping: " . $e->getMessage());
         }
     }
@@ -55,16 +59,14 @@ trait ColorantMapper
             }
 
             $colorantCodes = [];
-
             $highestRow = $colorantSheet->getHighestRow();
 
             if ($highestRow < 2) {
                 throw new \Exception('Colorant sheet is empty or has insufficient data.');
             }
 
-            // Start from row 2 to skip header (assuming row 1 is header)
             for ($row = 2; $row <= $highestRow; $row++) {
-                $code = $colorantSheet->getCell('C' . $row)->getValue(); // Column C is colorantcode
+                $code = $colorantSheet->getCell('C' . $row)->getValue();
                 if (!empty($code) && !in_array($code, $colorantCodes)) {
                     $colorantCodes[] = $code;
                 }
@@ -81,7 +83,7 @@ trait ColorantMapper
     }
 
     /**
-     * Process Combined Data sheet and map colorant quantities
+     * Process Combined Data sheet with chunking to manage memory
      *
      * @param \PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet
      * @param array $colorantCodes
@@ -97,7 +99,6 @@ trait ColorantMapper
             }
 
             $processedData = [];
-
             $highestRow = $combinedSheet->getHighestRow();
             $highestColumn = $combinedSheet->getHighestColumn();
 
@@ -105,53 +106,106 @@ trait ColorantMapper
                 throw new \Exception('Combined Data sheet is empty or has insufficient data.');
             }
 
-            // Get header row (assuming row 1 is header)
-            $headerRow = [];
-            for ($col = 1; $col <= \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn); $col++) {
-                $cell = $combinedSheet->getCellByColumnAndRow($col, 1)->getValue();
-                $headerRow[] = $cell;
-            }
+            // Get header row
+            $headerRow = $this->getHeaderRow($combinedSheet, $highestColumn);
 
-            // Process data rows (start from row 2)
-            for ($row = 2; $row <= $highestRow; $row++) {
-                $rowData = [];
-                $colorantValues = array_fill_keys($colorantCodes, 0);
+            // Pre-build colorant value map
+            $colorantValueMap = [];
+            for ($row = 2; $row <= $highestRow; $row += self::CHUNK_SIZE) {
+                $endRow = min($row + self::CHUNK_SIZE - 1, $highestRow);
 
-                // Get original row data
-                for ($col = 1; $col <= \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn); $col++) {
-                    $header = $headerRow[$col - 1] ?? '';
-                    $value = $combinedSheet->getCellByColumnAndRow($col, $row)->getValue();
-                    $rowData[$header] = $value;
-                }
+                for ($currentRow = $row; $currentRow <= $endRow; $currentRow++) {
+                    $rowData = $this->extractRowData($combinedSheet, $currentRow, $headerRow, $highestColumn);
+                    $colorantValues = $this->mapColorantQuantities($rowData, $colorantCodes);
 
-                // Map colorant quantities
-                for ($i = 1; $i <= 4; $i++) {
-                    $cntHeader = "CNT{$i}";
-                    $qntHeader = "QNT{$i}";
-
-                    $colorantCode = $rowData[$cntHeader] ?? null;
-                    $quantity = $rowData[$qntHeader] ?? 0;
-
-                    if ($colorantCode && in_array($colorantCode, $colorantCodes)) {
-                        $colorantValues[$colorantCode] = floatval($quantity);
+                    // Merge colorant values into row data
+                    foreach ($colorantValues as $code => $value) {
+                        $rowData[$code] = $value;
                     }
+
+                    $processedData[] = $rowData;
                 }
 
-                // Add colorant values to row data
-                foreach ($colorantValues as $code => $value) {
-                    $rowData[$code] = $value;
-                }
-
-                $processedData[] = $rowData;
+                // Garbage collection every chunk
+                gc_collect_cycles();
             }
 
-            // Fill missing RGB values with same ColorCode values
+            // Fill missing RGB values
             $processedData = $this->fillMissingRgbValues($processedData);
 
             return $processedData;
         } catch (\Exception $e) {
             throw new \Exception("Error processing combined data: " . $e->getMessage());
         }
+    }
+
+    /**
+     * Extract row data from sheet
+     *
+     * @param $sheet
+     * @param int $row
+     * @param array $headerRow
+     * @param string $highestColumn
+     * @return array
+     */
+    private function extractRowData($sheet, int $row, array $headerRow, string $highestColumn): array
+    {
+        $rowData = [];
+        $highestColIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
+
+        for ($col = 1; $col <= $highestColIndex; $col++) {
+            $header = $headerRow[$col - 1] ?? '';
+            $value = $sheet->getCellByColumnAndRow($col, $row)->getValue();
+            $rowData[$header] = $value;
+        }
+
+        return $rowData;
+    }
+
+    /**
+     * Get header row from sheet
+     *
+     * @param $sheet
+     * @param string $highestColumn
+     * @return array
+     */
+    private function getHeaderRow($sheet, string $highestColumn): array
+    {
+        $headerRow = [];
+        $highestColIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
+
+        for ($col = 1; $col <= $highestColIndex; $col++) {
+            $cell = $sheet->getCellByColumnAndRow($col, 1)->getValue();
+            $headerRow[] = $cell;
+        }
+
+        return $headerRow;
+    }
+
+    /**
+     * Map colorant quantities from row data
+     *
+     * @param array $rowData
+     * @param array $colorantCodes
+     * @return array
+     */
+    private function mapColorantQuantities(array $rowData, array $colorantCodes): array
+    {
+        $colorantValues = array_fill_keys($colorantCodes, 0);
+
+        for ($i = 1; $i <= 4; $i++) {
+            $cntHeader = "CNT{$i}";
+            $qntHeader = "QNT{$i}";
+
+            $colorantCode = $rowData[$cntHeader] ?? null;
+            $quantity = $rowData[$qntHeader] ?? 0;
+
+            if ($colorantCode && in_array($colorantCode, $colorantCodes)) {
+                $colorantValues[$colorantCode] = floatval($quantity);
+            }
+        }
+
+        return $colorantValues;
     }
 
     /**
@@ -162,59 +216,90 @@ trait ColorantMapper
      */
     private function fillMissingRgbValues(array $processedData): array
     {
-        // Create a lookup map of ColorCode to RGB values
         $colorCodeRgbMap = [];
 
-        // First pass: collect RGB values for each ColorCode where they exist
+        // First pass: collect RGB values
         foreach ($processedData as $row) {
-            $colorCode = $row['ColorCode'] ?? $row['colorCode'] ?? $row['colorcode'] ?? null;
+            $colorCode = $this->getColorCodeFromRow($row);
 
             if (!$colorCode) {
                 continue;
             }
 
-            $r = $row['R'] ?? $row['r'] ?? $row['rValue'] ?? $row['rvalue'] ?? null;
-            $g = $row['G'] ?? $row['g'] ?? $row['gValue'] ?? $row['gvalue'] ?? null;
-            $b = $row['B'] ?? $row['b'] ?? $row['bValue'] ?? $row['bvalue'] ?? null;
+            $rgb = $this->getRgbValuesFromRow($row);
 
-            // Only store if all RGB values are present and not empty
-            if (!$this->isEmptyValue($r) && !$this->isEmptyValue($g) && !$this->isEmptyValue($b)) {
-                $colorCodeRgbMap[$colorCode] = [
-                    'r' => $r,
-                    'g' => $g,
-                    'b' => $b
-                ];
+            if ($rgb['r'] !== null && $rgb['g'] !== null && $rgb['b'] !== null) {
+                $colorCodeRgbMap[$colorCode] = $rgb;
             }
         }
 
-        // Second pass: fill missing RGB values
+        // Second pass: fill missing values
         foreach ($processedData as &$row) {
-            $colorCode = $row['ColorCode'] ?? $row['colorCode'] ?? $row['colorcode'] ?? null;
+            $colorCode = $this->getColorCodeFromRow($row);
 
             if (!$colorCode || !isset($colorCodeRgbMap[$colorCode])) {
                 continue;
             }
 
-            // Check for R value
-            $rKey = $this->findKey($row, ['R', 'r', 'rValue', 'rvalue']);
-            if ($rKey !== null && $this->isEmptyValue($row[$rKey])) {
-                $row[$rKey] = $colorCodeRgbMap[$colorCode]['r'];
-            }
-
-            // Check for G value
-            $gKey = $this->findKey($row, ['G', 'g', 'gValue', 'gvalue']);
-            if ($gKey !== null && $this->isEmptyValue($row[$gKey])) {
-                $row[$gKey] = $colorCodeRgbMap[$colorCode]['g'];
-            }
-
-            // Check for B value
-            $bKey = $this->findKey($row, ['B', 'b', 'bValue', 'bvalue']);
-            if ($bKey !== null && $this->isEmptyValue($row[$bKey])) {
-                $row[$bKey] = $colorCodeRgbMap[$colorCode]['b'];
-            }
+            $this->fillRgbInRow($row, $colorCodeRgbMap[$colorCode]);
         }
 
         return $processedData;
+    }
+
+    /**
+     * Get ColorCode from row
+     *
+     * @param array $row
+     * @return string|null
+     */
+    private function getColorCodeFromRow(array $row): ?string
+    {
+        return $row['ColorCode'] ?? $row['colorCode'] ?? $row['colorcode'] ?? null;
+    }
+
+    /**
+     * Get RGB values from row
+     *
+     * @param array $row
+     * @return array
+     */
+    private function getRgbValuesFromRow(array $row): array
+    {
+        $r = $row['R'] ?? $row['r'] ?? $row['rValue'] ?? $row['rvalue'] ?? null;
+        $g = $row['G'] ?? $row['g'] ?? $row['gValue'] ?? $row['gvalue'] ?? null;
+        $b = $row['B'] ?? $row['b'] ?? $row['bValue'] ?? $row['bvalue'] ?? null;
+
+        return [
+            'r' => !$this->isEmptyValue($r) ? $r : null,
+            'g' => !$this->isEmptyValue($g) ? $g : null,
+            'b' => !$this->isEmptyValue($b) ? $b : null,
+        ];
+    }
+
+    /**
+     * Fill RGB values in row
+     *
+     * @param array $row
+     * @param array $rgbValues
+     * @return void
+     */
+    private function fillRgbInRow(array &$row, array $rgbValues): void
+    {
+        $rKey = $this->findKey($row, ['R', 'r', 'rValue', 'rvalue']);
+        if ($rKey !== null && $this->isEmptyValue($row[$rKey])) {
+            $row[$rKey] = $rgbValues['r'];
+        }
+
+        $gKey = $this->findKey($row, ['G', 'g', 'gValue', 'gvalue']);
+        if ($gKey !== null && $this->isEmptyValue($row[$gKey])) {
+            $row[$gKey] = $rgbValues['g'];
+        }
+
+        $bKey = $this->findKey($row, ['B', 'b', 'bValue', 'bvalue']);
+        if ($bKey !== null && $this->isEmptyValue($row[$bKey])) {
+            $row[$bKey] = $rgbValues['b'];
+        }
     }
 
     /**
@@ -261,10 +346,10 @@ trait ColorantMapper
             }
 
             $headers = [];
-
             $highestColumn = $combinedSheet->getHighestColumn();
+            $highestColIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
 
-            for ($col = 1; $col <= \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn); $col++) {
+            for ($col = 1; $col <= $highestColIndex; $col++) {
                 $cell = $combinedSheet->getCellByColumnAndRow($col, 1)->getValue();
                 $headers[] = $cell;
             }
@@ -283,35 +368,27 @@ trait ColorantMapper
      * Generate and download transformed Excel file
      *
      * @param array $processedData
-     * @param string $originalFilePath
      * @param string $outputFileName
      * @return void
      */
-    public function downloadTransformedExcel(array $processedData, string $originalFilePath, string $outputFileName = 'transformed_data.xlsx'): void
+    public function downloadTransformedExcel(array $processedData, string $outputFileName = 'transformed_data.xlsx'): void
     {
         try {
-            if (!file_exists($originalFilePath)) {
-                throw new \Exception("Original file not found: {$originalFilePath}");
-            }
-
             if (empty($processedData)) {
                 throw new \Exception('No data to export.');
             }
 
-            $spreadsheet = IOFactory::load($originalFilePath);
-            $combinedSheet = $spreadsheet->getSheetByName('Combined Data');
-
-            if (!$combinedSheet) {
-                throw new \Exception('Sheet "Combined Data" not found in the Excel file.');
+            if (!$this->cachedSpreadsheet) {
+                throw new \Exception('Spreadsheet not loaded.');
             }
 
             // Create new spreadsheet for output
             $newSpreadsheet = new Spreadsheet();
             $newSheet = $newSpreadsheet->getActiveSheet();
 
-            // Get all headers (original + colorant codes)
-            $originalHeaders = $this->getOriginalHeaders($spreadsheet);
-            $colorantCodes = $this->getColorantCodes($spreadsheet);
+            // Get headers
+            $originalHeaders = $this->getOriginalHeaders($this->cachedSpreadsheet);
+            $colorantCodes = $this->getColorantCodes($this->cachedSpreadsheet);
             $allHeaders = array_merge($originalHeaders, $colorantCodes);
 
             // Write headers
@@ -321,7 +398,7 @@ trait ColorantMapper
                 $col++;
             }
 
-            // Write data
+            // Write data in chunks
             $row = 2;
             foreach ($processedData as $data) {
                 $col = 1;
@@ -340,8 +417,11 @@ trait ColorantMapper
 
             $writer = new Xlsx($newSpreadsheet);
             $writer->save('php://output');
+
+            $this->clearCache();
             exit;
         } catch (\Exception $e) {
+            $this->clearCache();
             throw new \Exception("Error downloading transformed Excel: " . $e->getMessage());
         }
     }
@@ -385,9 +465,24 @@ trait ColorantMapper
                 throw new \Exception('No processed data available for download.');
             }
 
-            $this->downloadTransformedExcel($processed['data'], $filePath, $outputFileName);
+            $this->downloadTransformedExcel($processed['data'], $outputFileName);
         } catch (\Exception $e) {
+            $this->clearCache();
             throw new \Exception("Error processing and downloading Excel: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Clear cached spreadsheet to free memory
+     *
+     * @return void
+     */
+    private function clearCache(): void
+    {
+        if ($this->cachedSpreadsheet) {
+            $this->cachedSpreadsheet->disconnectWorksheets();
+            $this->cachedSpreadsheet = null;
+            gc_collect_cycles();
         }
     }
 }

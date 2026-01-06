@@ -28,6 +28,10 @@ class ForDifferentController extends Controller
             'database_name.max' => 'Database name must not exceed 255 characters.',
         ]);
 
+        // Increase memory limit for file processing
+        ini_set('memory_limit', '2G');
+        ini_set('max_execution_time', '300');
+
         $file = $request->file('excel_file');
         $filePath = $file->getRealPath();
 
