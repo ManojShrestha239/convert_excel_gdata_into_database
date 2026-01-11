@@ -19,8 +19,9 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # Configure PHP upload limits
 RUN echo "upload_max_filesize = 100M" > /usr/local/etc/php/conf.d/uploads.ini \
     && echo "post_max_size = 100M" >> /usr/local/etc/php/conf.d/uploads.ini \
-    && echo "max_execution_time = 300" >> /usr/local/etc/php/conf.d/uploads.ini \
-    && echo "max_input_time = 300" >> /usr/local/etc/php/conf.d/uploads.ini
+    && echo "max_execution_time = 600" >> /usr/local/etc/php/conf.d/uploads.ini \
+    && echo "max_input_time = 600" >> /usr/local/etc/php/conf.d/uploads.ini \
+    && echo "request_terminate_timeout = 600" >> /usr/local/etc/php/conf.d/uploads.ini
 
 # Set working directory
 WORKDIR /var/www

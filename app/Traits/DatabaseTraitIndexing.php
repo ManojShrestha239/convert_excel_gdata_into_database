@@ -736,9 +736,9 @@ trait DatabaseTraitIndexing
             $newRow['id'] = $id;
             $newRow['colorCode'] = $array[1];
             $newRow['colorName'] = $array[0];
-            $newRow['rValue'] = $item[0][26];
-            $newRow['gValue'] = $item[0][27];
-            $newRow['bValue'] = $item[0][28];
+            $newRow['rValue'] = $item[0][26] ?? '';
+            $newRow['gValue'] = $item[0][27] ?? '';
+            $newRow['bValue'] = $item[0][28] ?? '';
 
             // Check for each actual product
             foreach ($productNameToCodeMapping as $productName => $productCode) {
