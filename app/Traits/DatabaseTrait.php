@@ -315,14 +315,26 @@ trait DatabaseTrait
             $array = explode('_', $index);
             $newRow = [];
             foreach ($productArray as $key => $product) {
+
+                $colorName = strtolower(trim($array[0]));
+                $colorCode = strtolower(trim($array[1]));
+
+                if (empty($colorName) && !empty($colorCode)) {
+                    $array[0] = (string) $colorCode;
+                }
+
+                if (empty($colorCode) && !empty($array[0])) {
+                    $array[1] = (string) $array[0];
+                }
+
                 $newRow['id'] = $id;
-                $newRow['colorCode'] = $array[1];
-                $newRow['colorName'] = $array[0];
+                $newRow['colorCode'] = strtoupper($array[1]);
+                $newRow['colorName'] = strtoupper($array[0]);
                 $newRow['rValue'] = $item[0][26];
                 $newRow['gValue'] = $item[0][27];
                 $newRow['bValue'] = $item[0][28];
                 $check = array_filter($product, function ($ite) use ($array) {
-                    return $ite[2] === $array[0];
+                    return strtolower(trim($ite[3])) === strtolower(trim($array[1]));
                 });
                 if (!empty($check)) {
                     $value = 1;
@@ -334,6 +346,19 @@ trait DatabaseTrait
             $id++;
             $shadeData[] = $newRow;
         }
+
+        $uniqueShadeData = [];
+        $seen = [];
+
+        foreach ($shadeData as $shade) {
+            $key = strtolower(trim($shade['colorCode']));
+
+            if (!isset($seen[$key])) {
+                $seen[$key] = true;
+                $uniqueShadeData[] = $shade;
+            }
+        }
+        $shadeData = $uniqueShadeData;
 
         $this->createColorNameTable($productArray, $databaseName);
 
@@ -549,8 +574,8 @@ trait DatabaseTrait
         foreach ($shadeData as $row) {
             $insertData = [];
 
-            $colorName = $row['colorName'];
-            $colorCode = $row['colorCode'];
+            $colorName = strtolower(trim($row['colorName']));
+            $colorCode = strtolower(trim($row['colorCode']));
 
             if (empty($colorName) && !empty($colorCode)) {
                 $row['colorName'] = (string) $colorCode;
@@ -574,8 +599,8 @@ trait DatabaseTrait
             ];
 
             $shadeColorDatas[$row['colorCode']] = [
-                'colorCode' => $row['colorCode'],
-                'colorName' => $row['colorName'],
+                'colorCode' => $colorCode,
+                'colorName' => $colorName,
                 'rvalue' => (int)($row['rValue']),
                 'gvalue' => (int)($row['gValue']),
                 'bvalue' => (int)($row['bValue']),
@@ -583,8 +608,8 @@ trait DatabaseTrait
                 'updated_at' => now(),
             ];
 
-            $insertData['colorcode'] = $row['colorCode'] ?? '';
-            $insertData['colorname'] = $row['colorName'] ?? '';
+            $insertData['colorcode'] = $colorCode ?? '';
+            $insertData['colorname'] = $colorName ?? '';
             $insertData['rvalue'] = (int)($row['rValue'] ?? 0);
             $insertData['gvalue'] = (int)($row['gValue'] ?? 0);
             $insertData['bvalue'] = (int)($row['bValue'] ?? 0);
@@ -612,11 +637,29 @@ trait DatabaseTrait
             return;
         }
 
-        $shadeColorCodes = ShadeColor::whereIn('colorcode', array_column($colorCodes, 0))->pluck('colorcode')->toArray();
+        $shadeColorCodes = ShadeColor::whereIn('colorcode', array_column($colorCodes, 0))
+            ->pluck('colorcode')
+            ->map(fn($code) => strtolower(trim($code)))
+            ->toArray();
 
-        $filteredShadeColors = array_filter($shadeColorDatas, function ($shade) use ($shadeColorCodes) {
-            return !in_array($shade['colorCode'], $shadeColorCodes);
-        });
+        $shadeColorCodeMap = array_flip($shadeColorCodes);
+
+        $shadeColorCodeMap = array_change_key_case($shadeColorCodeMap, CASE_LOWER);
+
+        $filteredShadeColors = array_filter(
+            $shadeColorDatas,
+            static function ($shade) use ($shadeColorCodeMap) {
+                $code = strtolower(trim($shade['colorCode']));
+
+                if (isset($shadeColorCodeMap[$code])) {
+                    return false;
+                }
+
+                return $shade['rvalue'] != 0
+                    || $shade['gvalue'] != 0
+                    || $shade['bvalue'] != 0;
+            }
+        );
 
         if (!empty($filteredShadeColors)) {
             ShadeColor::insert(array_values($filteredShadeColors));
