@@ -429,6 +429,7 @@ trait DatabaseTrait
 
         $allInsertData = [];
         $columnNames = [];
+        $seenColorShades = []; // Track seen colorShade values
 
         foreach ($data as $row) {
             $insertData = [];
@@ -466,6 +467,16 @@ trait DatabaseTrait
                     $sanitizedColumnName = strtolower($sanitizedColumnName);
                     $insertData["`$sanitizedColumnName`"] = null;
                 }
+            }
+
+            // Skip duplicate colorShade entries
+            $colorShadeKey = $insertData['`colorshade`'] ?? null;
+            if ($colorShadeKey !== null && isset($seenColorShades[$colorShadeKey])) {
+                continue; // Skip this row as colorShade already exists
+            }
+
+            if ($colorShadeKey !== null) {
+                $seenColorShades[$colorShadeKey] = true;
             }
 
             if (empty($columnNames)) {
