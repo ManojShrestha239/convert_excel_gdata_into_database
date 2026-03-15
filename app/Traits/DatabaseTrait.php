@@ -416,6 +416,105 @@ trait DatabaseTrait
         DB::statement("CREATE TABLE `$sanitizedDbName`.`$tableName` ($columnsString)");
     }
 
+    // private function insertProductData($productName, $data, $headers, $colorantKeys, $databaseName)
+    // {
+    //     $tableName = $this->sanitizeTableName($productName);
+    //     $sanitizedDbName = $this->sanitizeDatabaseName($databaseName);
+
+    //     DB::statement("TRUNCATE TABLE `$sanitizedDbName`.`$tableName`");
+
+    //     if (empty($data)) {
+    //         return;
+    //     }
+
+    //     $allInsertData = [];
+    //     $columnNames = [];
+    //     $seenColorShades = []; // Track seen colorShade values
+
+    //     foreach ($data as $row) {
+    //         $insertData = [];
+
+    //         foreach ($headers as $index => $header) {
+    //             if ($header && isset($row[$index])) {
+    //                 if ($row[$index] === null || $row[$index] === '') {
+    //                     switch ($header) {
+    //                         case 'colorShade':
+    //                             if (isset($row[$index - 1]) && !empty($row[$index - 1])) {
+    //                                 $row[$index] = $row[$index - 1];
+    //                             }
+    //                             break;
+
+    //                         case 'colorName':
+    //                             if (isset($row[$index + 1]) && !empty($row[$index + 1])) {
+    //                                 $row[$index] = $row[$index + 1];
+    //                             }
+    //                             break;
+    //                     }
+    //                 }
+
+    //                 $sanitizedColumnName = $this->sanitizeColumnName($header);
+    //                 $sanitizedColumnName = strtolower($sanitizedColumnName);
+
+    //                 $value = $row[$index];
+
+    //                 if (in_array($index, array_merge($colorantKeys, [21]))) {
+    //                     $value = ($value === "" || $value === null) ? 0 : (float) $value;
+    //                 }
+
+    //                 $insertData["`$sanitizedColumnName`"] = $value;
+    //             } else {
+    //                 $sanitizedColumnName = $this->sanitizeColumnName($header);
+    //                 $sanitizedColumnName = strtolower($sanitizedColumnName);
+    //                 $insertData["`$sanitizedColumnName`"] = null;
+    //             }
+    //         }
+
+    //         // Skip duplicate colorShade entries
+    //         $colorShadeKey = $insertData['`colorshade`'] ?? null;
+    //         if ($colorShadeKey !== null && isset($seenColorShades[$colorShadeKey])) {
+    //             continue; // Skip this row as colorShade already exists
+    //         }
+
+    //         if ($colorShadeKey !== null) {
+    //             $seenColorShades[$colorShadeKey] = true;
+    //         }
+
+    //         if (empty($columnNames)) {
+    //             $columnNames = array_keys($insertData);
+    //         }
+
+    //         $allInsertData[] = array_values($insertData);
+    //     }
+
+    //     if (empty($allInsertData)) {
+    //         return;
+    //     }
+
+    //     $chunks = array_chunk($allInsertData, 250);
+    //     $columnsString = implode(', ', $columnNames);
+
+    //     foreach ($chunks as $chunk) {
+    //         $this->ensureConnection();
+
+    //         $valueStrings = [];
+    //         $allValues = [];
+
+    //         foreach ($chunk as $values) {
+    //             $valueStrings[] = '(' . str_repeat('?,', count($values) - 1) . '?)';
+    //             $allValues = array_merge($allValues, $values);
+    //         }
+
+    //         $valuesString = implode(', ', $valueStrings);
+
+    //         try {
+    //             DB::statement("INSERT INTO `$sanitizedDbName`.`$tableName` ($columnsString) VALUES $valuesString", $allValues);
+    //         } catch (\Exception $e) {
+    //             $this->ensureConnection();
+    //             DB::statement("INSERT INTO `$sanitizedDbName`.`$tableName` ($columnsString) VALUES $valuesString", $allValues);
+    //         }
+    //     }
+    // }
+
     private function insertProductData($productName, $data, $headers, $colorantKeys, $databaseName)
     {
         $tableName = $this->sanitizeTableName($productName);
@@ -427,9 +526,22 @@ trait DatabaseTrait
             return;
         }
 
+        // Find the fandeck column index and its sanitized name
+        $fandeckColumnIndex = null;
+        $fandeckSanitized = null;
+        foreach ($headers as $index => $header) {
+            if (strcasecmp($header, 'fandeck') === 0) {
+                $fandeckColumnIndex = $index;
+                $fandeckSanitized = $this->sanitizeColumnName($header);
+                $fandeckSanitized = strtolower($fandeckSanitized);
+                break;
+            }
+        }
+
         $allInsertData = [];
         $columnNames = [];
-        $seenColorShades = []; // Track seen colorShade values
+        $seenCombinationsPerFandeck = []; // For fandeck-specific uniqueness
+        $seenColorShadesGlobal = [];      // Fallback if fandeck column missing
 
         foreach ($data as $row) {
             $insertData = [];
@@ -469,14 +581,29 @@ trait DatabaseTrait
                 }
             }
 
-            // Skip duplicate colorShade entries
-            $colorShadeKey = $insertData['`colorshade`'] ?? null;
-            if ($colorShadeKey !== null && isset($seenColorShades[$colorShadeKey])) {
-                continue; // Skip this row as colorShade already exists
-            }
+            // Extract colorShade and fandeck values
+            $colorShade = $insertData['`colorshade`'] ?? null;
+            $fandeck = $fandeckSanitized ? ($insertData["`$fandeckSanitized`"] ?? null) : null;
 
-            if ($colorShadeKey !== null) {
-                $seenColorShades[$colorShadeKey] = true;
+            // Enforce uniqueness per fandeck (if fandeck column exists) or global fallback
+            if ($fandeckSanitized !== null) {
+                // Fandeck-specific uniqueness
+                $fandeckKey = $fandeck === null ? '###NULL###' : (string) $fandeck;
+
+                if ($colorShade !== null) {
+                    if (isset($seenCombinationsPerFandeck[$fandeckKey][$colorShade])) {
+                        continue; // Duplicate (fandeck, colorShade) combination
+                    }
+                    $seenCombinationsPerFandeck[$fandeckKey][$colorShade] = true;
+                }
+            } else {
+                // Fallback: global uniqueness on colorShade only
+                if ($colorShade !== null && isset($seenColorShadesGlobal[$colorShade])) {
+                    continue;
+                }
+                if ($colorShade !== null) {
+                    $seenColorShadesGlobal[$colorShade] = true;
+                }
             }
 
             if (empty($columnNames)) {
