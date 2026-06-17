@@ -22,7 +22,7 @@ class ExcelController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'excel' => 'required|mimes:xlsx,xls,csv|max:10240',
+            'excel' => 'required|mimes:xlsx,xls,csv|max:102400',
             'database_name' => 'required|string|max:255|regex:/^[a-zA-Z0-9_]+$/',
         ], [
             'excel.required' => 'Please select an Excel file to upload.',

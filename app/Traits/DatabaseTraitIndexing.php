@@ -764,6 +764,127 @@ trait DatabaseTraitIndexing
         $this->insertColorNameData($shadeData, $headers, $databaseName);
     }
 
+    // private function insertColorNameData($shadeData, $headers, $databaseName)
+    // {
+    //     $sanitizedDbName = $this->sanitizeDatabaseName($databaseName);
+
+    //     DB::statement("TRUNCATE TABLE `$sanitizedDbName`.ms_shadecolors");
+
+    //     if (empty($shadeData)) {
+    //         return;
+    //     }
+
+    //     $shadeColors = ShadeColor::select('colorcode', 'colorname', 'rvalue', 'gvalue', 'bvalue')
+    //         ->get()->keyBy('colorcode')->toArray();
+
+    //     $allInsertData = [];
+    //     $shadeColorDatas = [];
+    //     $colorCodes = [];
+
+    //     foreach ($shadeData as $row) {
+    //         $insertData = [];
+
+    //         $colorName = $row['colorName'];
+    //         $colorCode = $row['colorCode'];
+
+    //         if (empty($colorName) && !empty($colorCode)) {
+    //             $row['colorName'] = (string) $colorCode;
+    //         }
+
+    //         if (empty($colorCode) && !empty($row['colorName'])) {
+    //             $row['colorCode'] = (string) $row['colorName'];
+    //         }
+
+    //         $isOkay = !empty($shadeColors) && isset($shadeColors[$row['colorCode']]);
+
+    //         $defaults = $isOkay ? $shadeColors[$row['colorCode']] : ['rvalue' => 0, 'gvalue' => 0, 'bvalue' => 0];
+
+    //         $row['rValue'] = !empty($row['rValue']) ? (int)$row['rValue'] : (int)$defaults['rvalue'];
+    //         $row['gValue'] = !empty($row['gValue']) ? (int)$row['gValue'] : (int)$defaults['gvalue'];
+    //         $row['bValue'] = !empty($row['bValue']) ? (int)$row['bValue'] : (int)$defaults['bvalue'];
+
+
+    //         $colorCodes[] = [
+    //             $row['colorCode']
+    //         ];
+
+    //         $shadeColorDatas[$row['colorCode']] = [
+    //             'colorCode' => $row['colorCode'],
+    //             'colorName' => $row['colorName'],
+    //             'rvalue' => (int)($row['rValue']),
+    //             'gvalue' => (int)($row['gValue']),
+    //             'bvalue' => (int)($row['bValue']),
+    //             'created_at' => now(),
+    //             'updated_at' => now(),
+    //         ];
+
+    //         $insertData['colorcode'] = $row['colorCode'] ?? '';
+    //         $insertData['colorname'] = $row['colorName'] ?? '';
+    //         $insertData['rvalue'] = (int)($row['rValue'] ?? 0);
+    //         $insertData['gvalue'] = (int)($row['gValue'] ?? 0);
+    //         $insertData['bvalue'] = (int)($row['bValue'] ?? 0);
+
+    //         $productIndex = 0;
+    //         foreach ($headers as $index => $header) {
+    //             if ($index >= 6) {
+    //                 $sanitizedColumnName = $this->sanitizeColumnName($header);
+    //                 $sanitizedColumnName = strtolower($sanitizedColumnName);
+
+    //                 $value = isset($row[$productIndex]) ? (int)$row[$productIndex] : 0;
+    //                 $insertData["`$sanitizedColumnName`"] = $value;
+    //                 $productIndex++;
+    //             }
+    //         }
+
+    //         $allInsertData[] = array_values($insertData);
+    //     }
+
+    //     if (empty($allInsertData)) {
+    //         return;
+    //     }
+
+    //     if (empty($shadeColorDatas) || empty($colorCodes)) {
+    //         return;
+    //     }
+
+    //     $shadeColorCodes = ShadeColor::whereIn('colorcode', array_column($colorCodes, 0))->pluck('colorcode')->toArray();
+
+    //     $filteredShadeColors = array_filter($shadeColorDatas, function ($shade) use ($shadeColorCodes) {
+    //         return !in_array($shade['colorCode'], $shadeColorCodes);
+    //     });
+
+    //     if (!empty($filteredShadeColors)) {
+    //         ShadeColor::insert(array_values($filteredShadeColors));
+    //     }
+
+    //     $columnNames = array_keys($insertData ?? []);
+    //     $columnsString = implode(', ', $columnNames);
+
+    //     $chunks = array_chunk($allInsertData, 250);
+
+    //     foreach ($chunks as $chunk) {
+    //         $this->ensureConnection();
+
+    //         $valueStrings = [];
+    //         $allValues = [];
+
+    //         foreach ($chunk as $values) {
+    //             $valueStrings[] = '(' . str_repeat('?,', count($values) - 1) . '?)';
+    //             $allValues = array_merge($allValues, $values);
+    //         }
+
+    //         $valuesString = implode(', ', $valueStrings);
+
+    //         try {
+    //             DB::statement("INSERT INTO `$sanitizedDbName`.ms_shadecolors ($columnsString) VALUES $valuesString", $allValues);
+    //         } catch (\Exception $e) {
+    //             $this->ensureConnection();
+    //             DB::statement("INSERT INTO `$sanitizedDbName`.ms_shadecolors ($columnsString) VALUES $valuesString", $allValues);
+    //         }
+    //     }
+    // }
+
+
     private function insertColorNameData($shadeData, $headers, $databaseName)
     {
         $sanitizedDbName = $this->sanitizeDatabaseName($databaseName);
@@ -803,14 +924,13 @@ trait DatabaseTraitIndexing
             $row['gValue'] = !empty($row['gValue']) ? (int)$row['gValue'] : (int)$defaults['gvalue'];
             $row['bValue'] = !empty($row['bValue']) ? (int)$row['bValue'] : (int)$defaults['bvalue'];
 
-
             $colorCodes[] = [
                 $row['colorCode']
             ];
 
             $shadeColorDatas[$row['colorCode']] = [
-                'colorCode' => $row['colorCode'],
-                'colorName' => $row['colorName'],
+                'colorcode' => $row['colorCode'],
+                'colorname' => $row['colorName'],
                 'rvalue' => (int)($row['rValue']),
                 'gvalue' => (int)($row['gValue']),
                 'bvalue' => (int)($row['bValue']),
@@ -847,20 +967,73 @@ trait DatabaseTraitIndexing
             return;
         }
 
-        $shadeColorCodes = ShadeColor::whereIn('colorcode', array_column($colorCodes, 0))->pluck('colorcode')->toArray();
+        // Fix: Get existing color codes from the database to avoid duplicates
+        $existingShadeColorCodes = ShadeColor::whereIn('colorcode', array_column($colorCodes, 0))->pluck('colorcode')->toArray();
 
-        $filteredShadeColors = array_filter($shadeColorDatas, function ($shade) use ($shadeColorCodes) {
-            return !in_array($shade['colorCode'], $shadeColorCodes);
-        });
+        // Fix: Handle new and existing color data separately
+        $newShadeColors = [];
+        $updateData = [];
 
-        if (!empty($filteredShadeColors)) {
-            ShadeColor::insert(array_values($filteredShadeColors));
+        foreach ($shadeColorDatas as $colorCode => $shadeData) {
+            if (in_array($colorCode, $existingShadeColorCodes)) {
+                // Prepare update data
+                $updateData[] = [
+                    'colorcode' => $colorCode,
+                    'colorname' => $shadeData['colorname'],
+                    'rvalue' => $shadeData['rvalue'],
+                    'gvalue' => $shadeData['gvalue'],
+                    'bvalue' => $shadeData['bvalue']
+                ];
+            } else {
+                // Add to new records
+                $newShadeColors[] = $shadeData;
+            }
+        }
+
+        // Fix: Insert new shade colors using upsert to handle any remaining duplicates
+        if (!empty($newShadeColors)) {
+            try {
+                ShadeColor::upsert(
+                    $newShadeColors,
+                    ['colorcode'], // unique columns
+                    ['colorname', 'rvalue', 'gvalue', 'bvalue', 'updated_at'] // columns to update
+                );
+            } catch (\Exception $e) {
+                // Fallback: insert one by one
+                foreach ($newShadeColors as $shadeColor) {
+                    try {
+                        ShadeColor::updateOrCreate(
+                            ['colorcode' => $shadeColor['colorcode']],
+                            $shadeColor
+                        );
+                    } catch (\Exception $innerE) {
+                        \Log::warning("Failed to insert/update shade color {$shadeColor['colorcode']}: " . $innerE->getMessage());
+                    }
+                }
+            }
+        }
+
+        // Fix: Update existing shade colors
+        if (!empty($updateData)) {
+            foreach ($updateData as $data) {
+                try {
+                    ShadeColor::where('colorcode', $data['colorcode'])->update([
+                        'colorname' => $data['colorname'],
+                        'rvalue' => $data['rvalue'],
+                        'gvalue' => $data['gvalue'],
+                        'bvalue' => $data['bvalue'],
+                        'updated_at' => now()
+                    ]);
+                } catch (\Exception $e) {
+                    \Log::warning("Failed to update shade color {$data['colorcode']}: " . $e->getMessage());
+                }
+            }
         }
 
         $columnNames = array_keys($insertData ?? []);
         $columnsString = implode(', ', $columnNames);
 
-        $chunks = array_chunk($allInsertData, 250);
+        $chunks = array_chunk($allInsertData, 100);
 
         foreach ($chunks as $chunk) {
             $this->ensureConnection();
@@ -879,10 +1052,41 @@ trait DatabaseTraitIndexing
                 DB::statement("INSERT INTO `$sanitizedDbName`.ms_shadecolors ($columnsString) VALUES $valuesString", $allValues);
             } catch (\Exception $e) {
                 $this->ensureConnection();
-                DB::statement("INSERT INTO `$sanitizedDbName`.ms_shadecolors ($columnsString) VALUES $valuesString", $allValues);
+                if (count($chunk) > 50) {
+                    $smallerChunks = array_chunk($chunk, 50);
+                    foreach ($smallerChunks as $smallChunk) {
+                        $this->processSmallChunk($sanitizedDbName, $smallChunk, $columnsString);
+                    }
+                } else {
+                    try {
+                        DB::statement("INSERT INTO `$sanitizedDbName`.ms_shadecolors ($columnsString) VALUES $valuesString", $allValues);
+                    } catch (\Exception $retryE) {
+                        \Log::warning("Database insert failed: " . $retryE->getMessage());
+                    }
+                }
             }
         }
     }
+
+    // Helper method for processing smaller chunks
+    private function processSmallChunk($sanitizedDbName, $chunk, $columnsString)
+    {
+        $valueStrings = [];
+        $allValues = [];
+
+        foreach ($chunk as $values) {
+            $valueStrings[] = '(' . str_repeat('?,', count($values) - 1) . '?)';
+            $allValues = array_merge($allValues, $values);
+        }
+
+        $valuesString = implode(', ', $valueStrings);
+        try {
+            DB::statement("INSERT INTO `$sanitizedDbName`.ms_shadecolors ($columnsString) VALUES $valuesString", $allValues);
+        } catch (\Exception $e) {
+            \Log::warning("Small chunk insert failed: " . $e->getMessage());
+        }
+    }
+
 
     private function createColorantTable($databaseName)
     {

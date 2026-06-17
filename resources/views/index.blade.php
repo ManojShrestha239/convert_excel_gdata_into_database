@@ -404,7 +404,7 @@
                     }
 
                     // Validate file size (10MB)
-                    if (fileInput && fileInput.size > 10485760) {
+                    if (fileInput && fileInput.size > 104857600) {
                         $('#file-name').html(
                             '<span class="text-danger">File size must not exceed 10MB</span>');
                         $(this).val('');
